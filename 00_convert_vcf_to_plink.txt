@@ -1,0 +1,73 @@
+#00 Convert VCF to PLINK
+
+#Convert v8 vcfs to plink format
+
+import os
+import subprocess
+import time
+
+my_bucket = os.getenv('WORKSPACE_BUCKET')
+print(my_bucket)
+
+workDIR    =  "/home/jupyter/workspaces/ptsd_common_rare/"
+SVvcfDIR     =  "gs://fc-aou-datasets-controlled/-----------" #AoU Controlled Tier Acess
+outputDIR    =  f"{my_bucket}/data/cnv_vcf_plink/plink_files"
+logDIR       =  f"{my_bucket}/data/cnv_vcf_plink/logging"
+
+print(workDIR)
+print(SVvcfDIR)
+
+
+#Gather the list of SV VCFs
+
+command = "gsutil -u $GOOGLE_PROJECT ls " + SVvcfDIR + "/*.gz" # within the Google Cloud Storage 
+# and within my Google Project, list the files in the SVvcf directory and look for all .gz files
+
+vcf_list_gs = subprocess.check_output(command, shell=True) # Run a shell command and capture the output as a byte
+# string. This output will contain a list of .gz files in the SVvcf directory
+
+
+decoded_vcf_list =  vcf_list_gs.decode('utf-8') # convert the vcf_list_gs which is in byte string format
+# to UTF-8 string format 
+
+vcf_list_dir = decoded_vcf_list.strip().split('\n') # remove any leading or trailing whitespace and
+# spilt the string at each newline to create a list of file paths
+
+#Build dsub command inside the loop to submit the jobs of converting VCF files to PLINK format
+
+vcf_name = []
+vcf_name_wo_ext = []
+
+for vcf in vcf_list_dir:
+    vcf_file_name = vcf.split('/')[-1]  # Extract the filename from the path
+    vcf_name.append(vcf_file_name)  # Append the name to the list
+    vcf_name_without_extension = vcf_file_name.replace(".vcf.gz", "")
+    vcf_name_wo_ext.append(vcf_name_without_extension)
+    
+   # Building dsub command inside the loop to submit the jobs  
+    dsub_command = f'''                          
+    source ~/aou_dsub.bash #/home/jupyter/aou_dsub.bash 
+
+    aou_dsub \\
+        --image biocontainer/plink2:alpha2.3_jan2020 \\
+        --name "{vcf_file_name}" \\
+        --boot-disk-size 100 \\
+        --disk-size 100 \\
+        --logging "{logDIR}" \\
+        --input-recursive input="{SVvcfDIR}" \\
+        --output-recursive output="{outputDIR}" \\
+        --command 'plink2 \\
+                    --vcf ${{input}}/{vcf_file_name} \\
+                    --make-bed \\
+                    --out ${{output}}/{vcf_name_without_extension}' 
+     '''
+    
+      # Execute the command
+    subprocess.run(dsub_command, shell=True, executable='/bin/bash')
+
+    print(f'Job submitted for VCF file: {vcf_file_name}')
+    time.sleep(1)
+	
+	
+#Examine new .bed files in bucket
+!gsutil -u $GOOGLE_PROJECT -m ls {my_bucket}/data/cnv_vcf_plink/
